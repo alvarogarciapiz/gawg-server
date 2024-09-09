@@ -30,7 +30,10 @@ const readTemplate = (filePath) => {
 
 const createRunnerTypeString = (config) => {
   if (config.runner.type === 'self-hosted') {
-    const labels = config.runner.labels || [];
+    let labels = config.runner.labels || [];
+    if (!Array.isArray(labels)) {
+      labels = [];
+    }
     if (labels.length > 0) {
       return `[self-hosted, ${labels.join(', ')}]`;
     } else {
