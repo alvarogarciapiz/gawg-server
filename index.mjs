@@ -3,6 +3,90 @@ import { createAppAuth } from '@octokit/auth-app';
 import { Webhooks } from '@octokit/webhooks';
 import fs from 'fs';
 import path from 'path';
+import AWS from 'aws-sdk';
+
+const dynamoDb = new AWS.DynamoDB.DocumentClient();
+
+const checkRepositoryInDynamoDB = async (repositoryFullName) => {
+  const params = {
+    TableName: 'gawg',
+    Key: {
+      id: repositoryFullName,
+    },
+  };
+
+  try {
+    const result = await dynamoDb.get(params).promise();
+    return result.Item ? result.Item : null;
+  } catch (error) {
+    console.error('Error checking DynamoDB:', error);
+    throw new Error('Error checking DynamoDB');
+  }
+};
+
+const readTemplate = (filePath) => {
+  return fs.readFileSync(filePath, 'utf8');
+};
+
+const createRunnerTypeString = (config) => {
+  if (config.runner.type === 'self-hosted') {
+    const labels = config.runner.labels || [];
+    if (labels.length > 0) {
+      return `[self-hosted, ${labels.join(', ')}]`;
+    } else {
+      return '[self-hosted]';
+    }
+  } else {
+    return 'ubuntu-latest';
+  }
+};
+
+const createTriggers = (triggers) => {
+  let triggersStr = '';
+
+  if (triggers.workflow_dispatch) {
+    triggersStr += 'workflow_dispatch:\n';
+  }
+
+  if (triggers.push && triggers.push.active) {
+    triggersStr += '  push:\n';
+    if (triggers.push.branches) {
+      triggersStr += '    branches:\n';
+      triggers.push.branches.split(',').forEach(branch => {
+        triggersStr += `      - ${branch.trim()}\n`;
+      });
+    }
+  }
+
+  if (triggers.schedule && triggers.schedule.active) {
+    triggersStr += '  schedule:\n';
+    triggersStr += `    - cron: '${triggers.schedule.cron}'\n`;
+  }
+
+  if (triggers.pull_request && triggers.pull_request.active) {
+    triggersStr += '  pull_request:\n';
+    if (triggers.pull_request.branches) {
+      triggersStr += '    branches:\n';
+      triggers.pull_request.branches.split(',').forEach(branch => {
+        triggersStr += `      - ${branch.trim()}\n`;
+      });
+    }
+  }
+
+  return triggersStr;
+};
+
+const performSubstitutions = (template, config) => {
+  return template
+    .replaceAll('[[WORKFLOW_NAME]]', config.technology + ' Build and Deploy Workflow')
+    .replaceAll('[[ON_TRIGGERS]]', createTriggers(config.triggers))
+    .replaceAll('[[RUNS_ON_CONFIG]]', createRunnerTypeString(config))
+    .replaceAll('[[TECHNOLOGY]]', config.technology)
+    .replaceAll('[[MESSAGING_APP]]', "'" + config.notify + "'")
+    .replaceAll('[[DOCKER_ENABLED]]', config.docker ? 'true' : 'false')
+    .replaceAll('[[SELF_HOSTED_RUNNER_ENABLED]]', config.runner.type == 'self-hosted' ? 'true' : 'false')
+    .replaceAll('[[DEPLOYMENT_TYPE]]', config.deploy);
+};
 
 export const handler = async (event) => {
   const APP_ID = process.env.GITHUB_APP_ID;
@@ -74,10 +158,24 @@ export const handler = async (event) => {
       for (const repo of repositories) {
         const owner = repo.full_name.split('/')[0];
         const repoName = repo.name;
+        const repositoryFullName = repo.full_name;
+
+        // Comprobar si el repositorio existe en DynamoDB
+        const dbItem = await checkRepositoryInDynamoDB(repositoryFullName);
 
         for (const fileName of filesToCreate) {
-          const filePath = path.join('./templates', path.basename(fileName));
-          const content = fs.readFileSync(filePath, 'utf8');
+          let content;
+          if (dbItem) {
+            // Si el repositorio existe en DynamoDB, obtener el contenido y hacer sustituciones
+            const templatePath = path.join('./templates', path.basename(fileName));
+            const template = readTemplate(templatePath);
+            content = performSubstitutions(template, dbItem);
+          } else {
+            // Si el repositorio no existe en DynamoDB, leer el contenido del archivo
+            const filePath = path.join('./templates', path.basename(fileName));
+            content = fs.readFileSync(filePath, 'utf8');
+          }
+
           const encodedContent = Buffer.from(content).toString('base64');
           const message = `Add ${path.basename(fileName)}`;
 
