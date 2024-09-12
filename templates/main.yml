@@ -34,10 +34,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build [[TECHNOLOGY]]
+        id: build
         uses: alvarogarciapiz/gawg-build@v1
         with:
           technology: [[TECHNOLOGY]]
-          config-json: ${{ jobs.validate-build.outputs.JSON }}
+          config-json: ${{ needs.validate-build.outputs.JSON }}
 
   test:
     needs: [validate-build, build]
@@ -50,7 +51,7 @@ jobs:
         uses: alvarogarciapiz/gawg-test@v1
         with:
           technology: [[TECHNOLOGY]]
-          config-json: ${{ jobs.validate-build.outputs.JSON }}
+          config-json: ${{ needs.validate-build.outputs.JSON }}
 
   quality:
     needs: [validate-build, build]
@@ -70,7 +71,7 @@ jobs:
 
   deploy:
     needs: [validate-build, build, test, quality]
-    uses: alvarogarciapiz/gawg-deploy/.github/workflows/deploy.yml@main
+    uses: alvarogarciapiz/gawg-deploy/.github/workflows/deploy.yml@v1
     with:
       artifact-name: ${{ needs.build.outputs.ARTIFACT_NAME }}
       docker: [[DOCKER_ENABLED]]
