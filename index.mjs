@@ -179,6 +179,11 @@ export const handler = async (event) => {
             content = fs.readFileSync(filePath, 'utf8');
           }
 
+          // Replace YOUR_PROJECT_NAME with the repository name in workflow_config.yml
+          if (fileName === 'workflow_config.yml') {
+            content = content.replace('YOUR_PROJECT_NAME', repoName);
+          }
+
           const encodedContent = Buffer.from(content).toString('base64');
           const message = `Add ${path.basename(fileName)}`;
 
