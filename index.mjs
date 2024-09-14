@@ -44,6 +44,20 @@ const createRunnerTypeString = (config) => {
   }
 };
 
+const createDynamicConfig = (config) => {
+  let dynamicConfig = '';
+
+  if (config.technology === 'python') {
+    dynamicConfig += `PYTHON_VERSION="3.10"\nPYTHON_DIST_DIR="./"\n`;
+  } else if (config.technology === 'maven') {
+    dynamicConfig += `JAVA_VERSION="8"\nJAVA_DIST_DIR="target/"\nJAVA_DISTRIBUTION="temurin"\n`;
+  } else if (config.technology === 'node') {
+    dynamicConfig += `NODE_VERSION="18"\nNODE_DIST_DIR="dist/"\n`;
+  }
+
+  return dynamicConfig;
+};
+
 const createTriggers = (triggers) => {
   let triggersStr = '';
 
@@ -88,7 +102,28 @@ const performSubstitutions = (template, config) => {
     .replaceAll('[[MESSAGING_APP]]', "'" + config.notify + "'")
     .replaceAll('[[DOCKER_ENABLED]]', config.docker ? 'true' : 'false')
     .replaceAll('[[SELF_HOSTED_RUNNER_ENABLED]]', config.runner.type == 'self-hosted' ? 'true' : 'false')
-    .replaceAll('[[DEPLOYMENT_TYPE]]', config.deploy);
+    .replaceAll('[[DEPLOYMENT_TYPE]]', config.deploy)
+    .replaceAll('[[DYNAMIC_CONFIG]]', createDynamicConfig(config));
+};
+
+const uninstallGitHubApp = async (installationId, appId, privateKey) => {
+  const octokit = new Octokit({
+    authStrategy: createAppAuth,
+    auth: {
+      appId: appId,
+      privateKey: privateKey,
+    },
+  });
+
+  try {
+    await octokit.apps.deleteInstallation({
+      installation_id: installationId,
+    });
+    console.log(`Successfully uninstalled GitHub App with installation ID: ${installationId}`);
+  } catch (error) {
+    console.error(`Failed to uninstall GitHub App: ${error.message}`);
+    throw new Error('Failed to uninstall GitHub App');
+  }
 };
 
 export const handler = async (event) => {
@@ -179,9 +214,9 @@ export const handler = async (event) => {
             content = fs.readFileSync(filePath, 'utf8');
           }
 
-          // Replace YOUR_PROJECT_NAME with the repository name in workflow_config.yml
           if (fileName === 'workflow_config.yml') {
             content = content.replace('YOUR_PROJECT_NAME', repoName);
+            content = content.replace('[[DYNAMIC_CONFIG]]', createDynamicConfig(dbItem || { technology: 'default' }));
           }
 
           const encodedContent = Buffer.from(content).toString('base64');
@@ -222,6 +257,10 @@ export const handler = async (event) => {
           console.log(`File ${fileName} created in repo: ${owner}/${repoName}`);
         }
       }
+
+      // Uninstall the GitHub App after all files are added
+      await uninstallGitHubApp(installationId, APP_ID, PRIVATE_KEY);
+
     } catch (error) {
       console.error(`Error processing installation event: ${error.message}`);
       console.error(error);
